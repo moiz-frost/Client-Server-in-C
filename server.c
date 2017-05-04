@@ -32,11 +32,6 @@ int lineCount = 0; // line count
 char lineConcat[4]; // length = 4
 char* token; // strtoken
 const char s[2] = " "; // strdelimiter
-char *ptr; // int pointer for add/mult
-int result; // stores result for add/mult
-int err = 0; // stores error for add/mult
-char res[LINE_READ_SIZE]; // stores result in string
-int buff_size; // storing size from sprintf
 int pid = 0; // kill PID from user input
 char name[MAX_PROCESS]; // kill name from user input
 
@@ -212,9 +207,9 @@ void run(char program[], int fd)
     {
 
         case 0:
-        write(fd, "Ran!\n", sizeof("Ran!\n"));
         execStatus = execlp(program, program, (char *)0);
         // If invalid program, then resort to the code below, which will basically generate a signal
+        write(fd, "Invalid Program!\n", sizeof("Invalid Program!\n"));
         kill(getppid(), SIGUSR1);
         exit(2);
 
@@ -266,9 +261,6 @@ void listAll(int fd)
     }
 }
 
-
-
-
 // RETURNS THE LIST OF ALL ACTIVE PROCESS
 void listActive(int fd)
 {
@@ -309,6 +301,140 @@ void listActive(int fd)
     }
 
 
+    return;
+}
+
+void add(int fd, char* token)
+{
+    char *ptr; // int pointer for add/mult
+    int result; // stores result for add/mult
+    int buff_size; // storing size from sprintf
+    int err = 0; // stores error for add/mult
+    char res[LINE_READ_SIZE]; // stores result in string
+    ptr = '\0';
+    result = 0;
+    token = strtok(NULL, s);
+    while(token != NULL)
+    {
+        result = result + strtod(token, &ptr);
+        token = strtok(NULL, s);   
+    }
+    if(result != 0)
+    {
+        buff_size = sprintf(res, "%d\n", result);
+        err = write(STDOUT_FILENO, res, buff_size);
+        write(fd, res, buff_size);
+    }
+    return;
+}
+
+void subtract(int fd, char* token)
+{
+    char *ptr; // int pointer for add/mult
+    int result; // stores result for add/mult
+    int buff_size; // storing size from sprintf
+    int err = 0; // stores error for add/mult
+    char res[LINE_READ_SIZE]; // stores result in string
+    ptr = '\0';
+    result = 0;
+    token = strtok(NULL, s);
+    while(token != NULL)
+    {
+        result = result - strtod(token, &ptr);
+        token = strtok(NULL, s);   
+    }
+    if(result != 0)
+    {
+        buff_size = sprintf(res, "%d\n", result);
+        err = write(STDOUT_FILENO, res, buff_size);
+        write(fd, res, buff_size);
+    }
+    return;
+}
+
+void multiply(int fd, char* token)
+{
+    char *ptr; // int pointer for add/mult
+    int result; // stores result for add/mult
+    int buff_size; // storing size from sprintf
+    int err = 0; // stores error for add/mult
+    char res[LINE_READ_SIZE]; // stores result in string
+    ptr = '\0';
+    result = 1;
+    token = strtok(NULL, s);
+    while(token != NULL)
+    {
+        result = result * strtod(token, &ptr);
+        token = strtok(NULL, s);
+    }
+    if(result != 0)
+    {
+        buff_size = sprintf(res, "%d\n", result);
+        err = write(STDOUT_FILENO, res, buff_size);
+        write(fd, res, buff_size);
+    }
+    return;
+}
+
+void parseKill(int fd, char* token)
+{
+    char *ptr;
+    char* tokenTwo;
+    token = strtok(NULL, s);
+    tokenTwo = strtok(NULL, s);
+    
+    if(token != NULL)
+    {
+        pid = strtod(token, &ptr);
+        if(tokenTwo != NULL)
+        {
+            if(strcmp(tokenTwo, "all") == 0)
+            {
+                
+                killAllWithName(ptr, fd);
+            }
+        }
+        else if(pid > 0)
+        {
+            killWithPID(pid, fd);
+        }
+        else if(pid == 0)
+        {
+            killWithName(ptr, fd);
+        }
+    }
+    else
+    {
+        char killOutput[] = "Usage:"
+                            "kill <pid>\n"
+                            "kill <process name>\n"
+                            "kill <process name> all\n";
+
+        write(fd, killOutput, sizeof(killOutput));
+    }
+}
+
+void parseList(int fd, char *token)
+{
+    token = strtok(NULL, s);
+    if(token != NULL)
+    {            
+        if(strcmp(token, "all") == 0)
+        {
+            listAll(fd);
+        }
+    }
+    else
+    {
+        listActive(fd);
+    }
+    return;
+}
+
+void quit(int fd)
+{
+    write(fd, "Not allowed!\n", sizeof("Not allowed!\n"));
+    sleep(1);
     return;
 }
 
@@ -386,126 +512,42 @@ void parser(int fd)
     // If exit
     if(strcmp(token, "exit") == 0)
     {
-        write(fd, "Not allowed!\n", sizeof("Not allowed!\n"));
-        sleep(1);
+        quit(fd);
         return;
-        // exit(0);
     }
 
     // If add
     if(strcmp(token, "add") == 0)
     {
-        ptr = '\0';
-        result = 0;
-        token = strtok(NULL, s);
-        while(token != NULL)
-        {
-            result = result + strtod(token, &ptr);
-            token = strtok(NULL, s);   
-        }
-        if(result != 0)
-        {
-            buff_size = sprintf(res, "%d\n", result);
-            err = write(STDOUT_FILENO, res, buff_size);
-            write(fd, res, buff_size);
-        }
+        add(fd, token);
         return;
     }
 
     // If sub
     if(strcmp(token, "sub") == 0)
     {
-        ptr = '\0';
-        result = 0;
-        token = strtok(NULL, s);
-        while(token != NULL)
-        {
-            result = result - strtod(token, &ptr);
-            token = strtok(NULL, s);   
-        }
-        if(result != 0)
-        {
-            buff_size = sprintf(res, "%d\n", result);
-            err = write(STDOUT_FILENO, res, buff_size);
-            write(fd, res, buff_size);
-        }
+        subtract(fd, token);
         return;
     }
 
     // If mult
     if(strcmp(token, "mult") == 0)
     {
-        ptr = '\0';
-        result = 1;
-        token = strtok(NULL, s);
-        while(token != NULL)
-        {
-            result = result * strtod(token, &ptr);
-            token = strtok(NULL, s);
-        }
-        if(result != 0)
-        {
-            buff_size = sprintf(res, "%d\n", result);
-            err = write(STDOUT_FILENO, res, buff_size);
-            write(fd, res, buff_size);
-        }
+        multiply(fd, token);
         return;
     }
 
     // If list all/list
     if(strcmp(token, "list") == 0)
     {
-        token = strtok(NULL, s);
-        if(token != NULL)
-        {            
-            if(strcmp(token, "all") == 0)
-            {
-                listAll(fd);
-            }
-        }
-        else
-        {
-            listActive(fd);
-        }
+        parseList(fd, token);
         return;
     }
 
     // If kill
     if(strcmp(token, "kill") == 0)
     {
-        char* tokenTwo;
-        token = strtok(NULL, s);
-        tokenTwo = strtok(NULL, s);
-        
-        if(token != NULL)
-        {
-            pid = strtod(token, &ptr);
-            if(tokenTwo != NULL)
-            {
-                if(strcmp(tokenTwo, "all") == 0)
-                {
-                    
-                    killAllWithName(ptr, fd);
-                }
-            }
-            else if(pid > 0)
-            {
-                killWithPID(pid, fd);
-            }
-            else if(pid == 0)
-            {
-                killWithName(ptr, fd);
-            }
-        }
-        else
-        {
-            char killOutput[] = "Usage:"
-                                "kill <pid>\n"
-                                "kill <process name>\n"
-                                "kill <process name> all\n";
-
-            write(fd, killOutput, sizeof(killOutput));
-        }
+        parseKill(fd, token);
         return;
     }
 
@@ -531,6 +573,23 @@ void parser(int fd)
 
 }
 
+// THREAD
+void *mainServerTerminalReader()
+{
+    write(STDOUT_FILENO, "``Server Started``\n", sizeof("``Server Started``\n"));
+    while(write(STDOUT_FILENO, ">>", sizeof(">>")))
+    {
+        char *terminalLineBuffer[LINE_READ_SIZE]; // for reading from terminal
+        int terminalLineCount = read(STDIN_FILENO, &terminalLineBuffer, LINE_READ_SIZE);  
+        if(terminalLineCount < 0)
+        {
+            perror("Server Terminal Read Error");
+            exit(0);
+        }
+        write(STDOUT_FILENO, terminalLineBuffer, terminalLineCount);
+    }
+    pthread_exit(0);
+}
 
 // MAIN FUNCTION
 int main(int argc, char const *argv[])
@@ -541,10 +600,11 @@ int main(int argc, char const *argv[])
     pid_t pid;
     int len = sizeof(struct sockaddr_in);
     char clientFD[50];
-    char inputFromClient[50]; 
+    char inputFromClient[50];
+    struct sockaddr_in client;    
+    pthread_t serverThread; // thread ID
 
-
-    struct sockaddr_in client;
+    int threadReturnValue = pthread_create(&serverThread, NULL, mainServerTerminalReader, NULL); // create a thread task
 
     while(1)
     {
@@ -579,11 +639,14 @@ int main(int argc, char const *argv[])
             //     exit(0);
             // }
         }
-
-
-
-
     }
+
+    if(threadReturnValue < 0)
+    {
+        perror("Thread Error");
+    }
+
+    pthread_join(serverThread, NULL); // waits until a thread is complete so that the program doesn't exit before thread execution
         
     return 0;
 }

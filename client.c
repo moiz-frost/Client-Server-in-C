@@ -6,15 +6,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <strings.h>
 
 
-/*
- * This program creates a socket and initiates a connection with the socket
- * given in the command line.  One message is sent over the connection and
- * then the socket is closed, ending the connection. The form of the command
- * line is streamwrite hostname portnumber 
- */
+ void *recieveOutputFromServer(void* fd)
+ {
+	int* sock = fd;
+	int serverOutputCount;
+	char serverOutput[5000];
+	serverOutputCount = read(*sock, serverOutput, sizeof(serverOutput));
+	write(STDOUT_FILENO, serverOutput, serverOutputCount);
+	pthread_exit(0);
+ }
 
 int main(int argc, char *argv[])
 {
@@ -23,9 +27,7 @@ int main(int argc, char *argv[])
 	struct hostent *hp;
     char terminalInput[50];
     int terminalInputCount;
-    int pipe[2];
-	int serverOutputCount;
-	char serverOutput[5000];
+	pthread_t serverOutputThread;
     
 	// Create socket
 
@@ -55,13 +57,15 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	while(write(STDOUT_FILENO, "> ", sizeof("> "))) 
+	write(STDOUT_FILENO, "``Client Started``\n", sizeof("``Client Started``\n"));
+	while(1) 
     {
         terminalInputCount = read(STDIN_FILENO, terminalInput, sizeof(terminalInput));
         write(sock, terminalInput, terminalInputCount);
-		serverOutputCount = read(sock, serverOutput, sizeof(serverOutput));
-		write(STDOUT_FILENO, serverOutput, serverOutputCount);
+		pthread_create(&serverOutputThread, NULL, recieveOutputFromServer, &sock);
     }
+
+	pthread_join(serverOutputThread, NULL);
 
 	close(sock);
     
