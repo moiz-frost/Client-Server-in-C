@@ -3,32 +3,30 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <stdio.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <strings.h>
+#include <string.h>
 
 
- void *recieveOutputFromServer(void* fd)
+#define LINE_READ_SIZE 5000
+
+
+const char s[2] = " "; // strdelimiter
+char terminalInput[50];
+int terminalInputCount;
+int clientFD;
+int isActive = 0; // 1 == clientFD active, 0 = STDOUT_FILENO active
+
+pthread_t serverOutputThread;
+pthread_t serverInputThread;
+
+ int initializeClientFD(char *host, char *port)
  {
-	int* sock = fd;
-	int serverOutputCount;
-	char serverOutput[5000];
-	serverOutputCount = read(*sock, serverOutput, sizeof(serverOutput));
-	write(STDOUT_FILENO, serverOutput, serverOutputCount);
-	pthread_exit(0);
- }
-
-int main(int argc, char *argv[])
-{
 	int sock;
 	struct sockaddr_in server;
 	struct hostent *hp;
-    char terminalInput[50];
-    int terminalInputCount;
-	pthread_t serverOutputThread;
-    
+
 	// Create socket
 
 	sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -40,16 +38,16 @@ int main(int argc, char *argv[])
 	// Connect socket using name specified by command line
 	server.sin_family = AF_INET;
 
-	hp = gethostbyname(argv[1]);
+	hp = gethostbyname(host);
 
 	if (hp <= 0)
     {
-		fprintf(stderr, "%s: Unknown Host\n", argv[1]);
+		fprintf(stderr, "%s: Unknown Host\n", host);
 		exit(1);
 	}
 
 	bcopy(hp->h_addr, &server.sin_addr, hp->h_length);
-	server.sin_port = htons(atoi(argv[2]));
+	server.sin_port = htons(atoi(port));
 
 	if (connect(sock,(struct sockaddr *) &server,sizeof(server)) < 0) 
     {
@@ -57,16 +55,128 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	write(STDOUT_FILENO, "``Client Started``\n", sizeof("``Client Started``\n"));
-	while(1) 
+	write(STDOUT_FILENO, "``Client Initialized``\n", sizeof("``Client Initialized``\n"));
+
+	return sock;
+ }
+
+ void disconnect(int fd)
+ {
+	 write(STDOUT_FILENO, "``Client Closed``\n", sizeof("``Client Closed``\n"));	 
+	 close(fd);	 
+	//  pthread_cancel(serverOutputThread);
+	//  pthread_cancel(serverInputThread);
+ }
+
+
+ void parser(int fd, char terminalInput[], int terminalInputCount)
+{
+	char *token;
+	char *tokenTwo;
+    
+    if((terminalInputCount == 1) & (isActive == 0))
     {
-        terminalInputCount = read(STDIN_FILENO, terminalInput, sizeof(terminalInput));
-        write(sock, terminalInput, terminalInputCount);
-		pthread_create(&serverOutputThread, NULL, recieveOutputFromServer, &sock);
+        write(STDOUT_FILENO, "No command entered\n", sizeof("No command entered\n"));
+        return;
     }
+
+	terminalInput[terminalInputCount - 1] = '\0';
+	
+	token = strtok(terminalInput, s);
+
+	if(isActive == 0)
+	{
+		if(strcmp(token, "connect") == 0)
+		{
+			token = strtok(NULL, s);
+			tokenTwo = strtok(NULL, s);
+			if(tokenTwo != NULL)
+			{
+				clientFD = initializeClientFD(token, tokenTwo);
+				isActive = 1;
+			} else
+			{
+				write(STDOUT_FILENO, "Incomplete Command\n", sizeof("Incomplete Command\n"));
+			}
+		} else
+		{
+			write(STDOUT_FILENO, "Invalid Command\n", sizeof("Invalid Command\n"));
+		}
+		return;
+	}
+
+	if(isActive == 1)
+	{
+		if(strcmp(token, "disconnect") == 0)
+		{
+			if(fd > 2)
+			{
+				isActive = 0;
+				disconnect(fd);
+			} else
+			{
+				write(STDOUT_FILENO, "Invalid File Descriptor\n", sizeof("Invalid File Descriptor\n"));
+			}
+			return;
+		}
+	}
+
+	return;
+}
+
+ // LISTENER FOR OUTPUTS FROM THE SERVER
+ void *recieveOutputFromServer()
+ {
+	 int serverOutputCount;
+	 char serverOutput[5000];
+	 while(1)
+	 {
+		 while(isActive == 0)
+		 {
+			 // lalala..
+		 }
+		 while(isActive == 1)
+		 {
+			 serverOutputCount = read(clientFD, serverOutput, sizeof(serverOutput));
+			 write(STDOUT_FILENO, serverOutput, serverOutputCount);
+		 }
+	 }
+
+	 pthread_exit(0);
+ }
+
+// LISTENER FOR INPUTS FROM THE CLIENT
+void *recieveInputFromClient()
+{
+	int clientInputCount;
+	char clientInput[5000];
+	while(1)
+	{
+		while(isActive == 0)
+		{
+			clientInputCount = read(STDOUT_FILENO, clientInput, sizeof(clientInput));
+			parser(STDOUT_FILENO, clientInput, clientInputCount);
+		}
+		while(isActive == 1)
+		{
+			clientInputCount = read(STDOUT_FILENO, clientInput, sizeof(clientInput));
+			// parser(clientFD, clientInput, clientInputCount);
+			write(clientFD, clientInput, clientInputCount);
+		}
+	}
+	
+	pthread_exit(0);
+
+ }
+
+
+
+int main(int argc, char *argv[])
+{
+	pthread_create(&serverOutputThread, NULL, recieveOutputFromServer, NULL);
+	pthread_create(&serverInputThread, NULL, recieveInputFromClient, NULL);
 
 	pthread_join(serverOutputThread, NULL);
 
-	close(sock);
     
 }

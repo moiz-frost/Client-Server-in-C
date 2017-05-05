@@ -20,7 +20,7 @@
 #include <pthread.h>
 
 
-#define LINE_READ_SIZE 100
+#define LINE_READ_SIZE 5000
 #define MAX_PROCESS 50
 #define DATE_TIME_LENGTH 150
 
@@ -44,6 +44,14 @@ typedef struct
     char stopTime[DATE_TIME_LENGTH];
     char status[10];
 } process;
+
+// STRUCT FOR PASSING MULTIPLE ARGUMENTS IN THREAD
+struct arguments
+{
+    int fd;
+    char *token;
+};
+
 
 // PROCESS COUNTER
 int processCounter = 0;
@@ -239,7 +247,7 @@ void listAll(int fd)
         return;
     }
 
-    char string[50]; // storage for sprintf
+    char string[500]; // storage for sprintf
     int stringCount; // Count value for sprintf
 
     for (int i = 0; i < processCounter; i++)
@@ -256,6 +264,8 @@ void listAll(int fd)
                                 p[i].startTime,
                                 p[i].stopTime,
                                 p[i].status);
+
+        string[0] = '\0'; // For avoiding stack smashing
 
         write(fd, string, stringCount);
     }
@@ -304,8 +314,11 @@ void listActive(int fd)
     return;
 }
 
-void add(int fd, char* token)
+void* add(void* argumentList)
 {
+    struct arguments *args = (struct arguments*)argumentList;
+    int sock = args ->fd;
+    char* token = args ->token;
     char *ptr; // int pointer for add/mult
     int result; // stores result for add/mult
     int buff_size; // storing size from sprintf
@@ -323,13 +336,17 @@ void add(int fd, char* token)
     {
         buff_size = sprintf(res, "%d\n", result);
         err = write(STDOUT_FILENO, res, buff_size);
-        write(fd, res, buff_size);
+        err = write(sock, res, buff_size);
     }
-    return;
+    result = 0;    
+    pthread_exit(0);
 }
 
-void subtract(int fd, char* token)
+void* subtract(void* argumentList)
 {
+    struct arguments *args = (struct arguments*)argumentList;
+    int sock = args ->fd;
+    char* token = args ->token;
     char *ptr; // int pointer for add/mult
     int result; // stores result for add/mult
     int buff_size; // storing size from sprintf
@@ -347,13 +364,16 @@ void subtract(int fd, char* token)
     {
         buff_size = sprintf(res, "%d\n", result);
         err = write(STDOUT_FILENO, res, buff_size);
-        write(fd, res, buff_size);
+        err = write(sock, res, buff_size);
     }
-    return;
+    pthread_exit(0);
 }
 
-void multiply(int fd, char* token)
+void* multiply(void* argumentList)
 {
+    struct arguments *args = (struct arguments*)argumentList;
+    int sock = args ->fd;
+    char* token = args ->token;
     char *ptr; // int pointer for add/mult
     int result; // stores result for add/mult
     int buff_size; // storing size from sprintf
@@ -371,9 +391,9 @@ void multiply(int fd, char* token)
     {
         buff_size = sprintf(res, "%d\n", result);
         err = write(STDOUT_FILENO, res, buff_size);
-        write(fd, res, buff_size);
+        err = write(sock, res, buff_size);
     }
-    return;
+    pthread_exit(0);
 }
 
 void parseKill(int fd, char* token)
@@ -485,12 +505,18 @@ int initServer()
 
 void parser(int fd)
 {
+    pthread_t addThread;
+    pthread_t subThread;
+    pthread_t multThread;
+
     lineCount = read(fd, line, LINE_READ_SIZE); // read from client fd
+    
     if(lineCount == 1) // a workaround to prevent segmentation fault
     {
         write(fd, "No command entered\n", sizeof("No command entered\n"));
         return;
     }
+    
     line[lineCount - 1] = '\0'; // add a null character at the end
     token = strtok(line, s); // initial tokenization
 
@@ -519,21 +545,33 @@ void parser(int fd)
     // If add
     if(strcmp(token, "add") == 0)
     {
-        add(fd, token);
+        struct arguments args;
+        args.fd = fd;
+        args.token = token;
+        pthread_create(&addThread, NULL, add, (void *)&args);
+        pthread_join(addThread, NULL);
         return;
     }
 
     // If sub
     if(strcmp(token, "sub") == 0)
     {
-        subtract(fd, token);
+        struct arguments args;
+        args.fd = fd;
+        args.token = token;
+        pthread_create(&subThread, NULL, subtract, (void *)&args);
+        pthread_join(subThread, NULL);
         return;
     }
 
     // If mult
     if(strcmp(token, "mult") == 0)
     {
-        multiply(fd, token);
+        struct arguments args;
+        args.fd = fd;
+        args.token = token;
+        pthread_create(&multThread, NULL, multiply, (void *)&args);
+        pthread_join(multThread, NULL);
         return;
     }
 
@@ -577,7 +615,7 @@ void parser(int fd)
 void *mainServerTerminalReader()
 {
     write(STDOUT_FILENO, "``Server Started``\n", sizeof("``Server Started``\n"));
-    while(write(STDOUT_FILENO, ">>", sizeof(">>")))
+    while(1)
     {
         char *terminalLineBuffer[LINE_READ_SIZE]; // for reading from terminal
         int terminalLineCount = read(STDIN_FILENO, &terminalLineBuffer, LINE_READ_SIZE);  
