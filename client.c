@@ -8,15 +8,10 @@
 #include <pthread.h>
 #include <string.h>
 
-
 #define LINE_READ_SIZE 5000
 
-
-const char s[2] = " "; // strdelimiter
-char terminalInput[50];
-int terminalInputCount;
 int clientFD;
-int isActive = 0; // 1 == clientFD active, 0 = STDOUT_FILENO active
+int isClientActive = 0; // 1 == clientFD active, 0 = STDOUT_FILENO active
 
 pthread_t serverOutputThread;
 pthread_t serverInputThread;
@@ -71,20 +66,35 @@ pthread_t serverInputThread;
 
  void parser(int fd, char terminalInput[], int terminalInputCount)
 {
+	const char s[2] = " "; // strdelimiter
 	char *token;
 	char *tokenTwo;
     
-    if((terminalInputCount == 1) & (isActive == 0))
+    if((terminalInputCount == 1))
     {
-        write(STDOUT_FILENO, "No command entered\n", sizeof("No command entered\n"));
-        return;
+		if(isClientActive == 0)
+		{
+			write(STDOUT_FILENO, "No command entered\n", sizeof("No command entered\n"));
+			return;
+		}
+		if(isClientActive == 1)
+		{
+			return;
+		}
     }
 
 	terminalInput[terminalInputCount - 1] = '\0';
 	
 	token = strtok(terminalInput, s);
+	
+	// If exit
+    if(strcmp(token, "exit") == 0)
+    {
+		exit(0);   
+    }
+	return;
 
-	if(isActive == 0)
+	if(isClientActive == 0)
 	{
 		if(strcmp(token, "connect") == 0)
 		{
@@ -93,7 +103,7 @@ pthread_t serverInputThread;
 			if(tokenTwo != NULL)
 			{
 				clientFD = initializeClientFD(token, tokenTwo);
-				isActive = 1;
+				isClientActive = 1;
 			} else
 			{
 				write(STDOUT_FILENO, "Incomplete Command\n", sizeof("Incomplete Command\n"));
@@ -105,13 +115,14 @@ pthread_t serverInputThread;
 		return;
 	}
 
-	if(isActive == 1)
+
+	if(isClientActive == 1)
 	{
 		if(strcmp(token, "disconnect") == 0)
 		{
 			if(fd > 2)
 			{
-				isActive = 0;
+				isClientActive = 0;
 				disconnect(fd);
 			} else
 			{
@@ -121,7 +132,7 @@ pthread_t serverInputThread;
 		}
 	}
 
-	return;
+
 }
 
  // LISTENER FOR OUTPUTS FROM THE SERVER
@@ -131,11 +142,11 @@ pthread_t serverInputThread;
 	 char serverOutput[5000];
 	 while(1)
 	 {
-		 while(isActive == 0)
+		 while(isClientActive == 0)
 		 {
 			 // lalala..
 		 }
-		 while(isActive == 1)
+		 while(isClientActive == 1)
 		 {
 			 serverOutputCount = read(clientFD, serverOutput, sizeof(serverOutput));
 			 write(STDOUT_FILENO, serverOutput, serverOutputCount);
@@ -148,20 +159,27 @@ pthread_t serverInputThread;
 // LISTENER FOR INPUTS FROM THE CLIENT
 void *recieveInputFromClient()
 {
-	int clientInputCount;
 	char clientInput[5000];
+	int clientInputCount;
+	char parserInput[5000];
+	int parserInputCount;
+
 	while(1)
 	{
-		while(isActive == 0)
+		while(isClientActive == 0)
 		{
 			clientInputCount = read(STDOUT_FILENO, clientInput, sizeof(clientInput));
 			parser(STDOUT_FILENO, clientInput, clientInputCount);
 		}
-		while(isActive == 1)
+		while(isClientActive == 1)
 		{
+			memset(clientInput, '\0', sizeof(clientInput)); // Clearing the buffer	
+
 			clientInputCount = read(STDOUT_FILENO, clientInput, sizeof(clientInput));
-			// parser(clientFD, clientInput, clientInputCount);
+			parserInputCount = sprintf(parserInput, "%s", clientInput);
+
 			write(clientFD, clientInput, clientInputCount);
+			parser(clientFD, parserInput, parserInputCount);
 		}
 	}
 	

@@ -429,7 +429,6 @@ void* add(void* argumentList)
 {
     pthread_mutex_lock (&mutex);
     
-    sleep(3);
     struct arguments *args = (struct arguments*)argumentList;
     int sock = args ->fd;
     char* token = args ->token;
@@ -669,10 +668,10 @@ void serverParser(char terminalInput[], int terminalInputCount)
 
 
     // If help
-    if(strcmp(line, "help") == 0)
+    if(strcmp(token, "help") == 0)
     {
         char helpOutput[] = "----------------------------------------------------------------------------------------\n"
-                            "lisr                                       -- to display list of connected clients\n"
+                            "list                                       -- to display list of connected clients\n"
                             "list all                                   -- to display list of all currently running processes\n"
                             "message <fd of client> <your message>      -- to send a message to a desired client\n"
                             "exit                                       -- to quit now!\n"
@@ -680,7 +679,7 @@ void serverParser(char terminalInput[], int terminalInputCount)
                             "----------------------------------------------------------------------------------------\n";
 
         write(STDOUT_FILENO, helpOutput, sizeof(helpOutput));
-        return 0;
+        return;
     }
 
 
