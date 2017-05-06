@@ -22,18 +22,19 @@
 
 #define LINE_READ_SIZE 5000
 #define MAX_PROCESS 50
+#define MAX_CLIENTS 50
 #define DATE_TIME_LENGTH 150
 
 
 // ALL GLOBAL VARIABLES
-char currentSystemDateTime[DATE_TIME_LENGTH]; // current system dateTime
-char line[LINE_READ_SIZE]; // reading from terminal
-int lineCount = 0; // line count   
-char lineConcat[4]; // length = 4
-char* token; // strtoken
+char currentSystemDateTime[DATE_TIME_LENGTH]; // current system dateTime  
 const char s[2] = " "; // strdelimiter
 int pid = 0; // kill PID from user input
 char name[MAX_PROCESS]; // kill name from user input
+int cli; // clientFD
+int clientWantsToDisconnect = 0;
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // STRUCT FOR PROCESS LIST
 typedef struct
@@ -44,6 +45,15 @@ typedef struct
     char stopTime[DATE_TIME_LENGTH];
     char status[10];
 } process;
+
+// STRUCT FOR CLIENT LIST
+typedef struct
+{
+    char ip[50];
+	int port;
+	int clientFD;
+    char status[20];
+} clientInfo;
 
 // STRUCT FOR PASSING MULTIPLE ARGUMENTS IN THREAD
 struct arguments
@@ -56,8 +66,149 @@ struct arguments
 // PROCESS COUNTER
 int processCounter = 0;
 
+// CLIENT COUNTER
+int clientCounter = 0;
+
 // MAX PROCESS STORED CAN BE 50
 process p[MAX_PROCESS];
+
+// MAX CLIENTS STORED CAN BE 50
+clientInfo clients[MAX_CLIENTS];
+
+
+void listClients()
+{
+    char string[500]; // storage for sprintf
+    int stringCount; // Count value for sprintf
+
+    if(clientCounter == 0)
+    {
+        write(STDOUT_FILENO, "Client List Empty\n", sizeof("Client List Empty\n"));
+    }
+
+    for (int i = 0; i < clientCounter; i++)
+    {
+        if((strcmp(clients[i].status, "Active")) == 0)
+        {
+            stringCount = sprintf(string, "-------------------------------------------------------\n"
+                                            "IP : %s\n"
+                                            "Port : %d\n"
+                                            "Client FD : %d\n"
+                                            "Status : %s\n"
+                                          "-------------------------------------------------------\n",
+                                    clients[i].ip,
+                                    clients[i].port,
+                                    clients[i].clientFD,
+                                    clients[i].status
+            );
+
+            string[0] = '\0'; // For avoiding stack smashing
+
+            write(STDOUT_FILENO, string, stringCount);
+        }
+    }
+}
+
+void appendClient(int fd, struct sockaddr_in client)
+{
+    sprintf(clients[clientCounter].ip,"%s", inet_ntoa(client.sin_addr));
+    clients[clientCounter].port = ntohs(client.sin_port);
+    clients[clientCounter].clientFD = fd;
+    sprintf(clients[clientCounter].status, "%s", "Active");
+    clientCounter++;
+}
+
+void deactivateClientFromList(int fd)
+{
+    for (int i = 0; i < clientCounter; i++)
+    {
+        if(clients[i].clientFD == fd)
+        {
+            if((strcmp(clients[i].status, "Active")) == 0)
+            {
+                sprintf(clients[i].status, "%s", "Inactive");
+            }
+        }
+    }
+}
+
+// RETURNS THE LIST OF ALL ACTIVE AND ALL KILLED PROCESS
+void listAll(int fd)
+{
+    if(processCounter == 0)
+    {
+        write(fd, "Process List is Empty\n", sizeof("Process List is Empty\n"));
+        return;
+    }
+
+    char string[500]; // storage for sprintf
+    int stringCount; // Count value for sprintf
+
+    for (int i = 0; i < processCounter; i++)
+    {
+        stringCount = sprintf(string, "-------------------------------------------------------\n"
+                                        "Name : %s\n"
+                                        "PID : %d\n"
+                                        "Start Time : %s"
+                                        "Stop Time : %s"
+                                        "Status : %s\n"
+                                      "-------------------------------------------------------\n",
+                                p[i].name,
+                                p[i].pid,
+                                p[i].startTime,
+                                p[i].stopTime,
+                                p[i].status);
+
+        string[0] = '\0'; // For avoiding stack smashing
+
+        write(fd, string, stringCount);
+    }
+}
+
+
+
+// RETURNS THE LIST OF ALL ACTIVE PROCESS
+void listActive(int fd)
+{
+    int isListEmpty = 1;
+
+    if(processCounter == 0)
+    {
+        write(fd, "Process List is Empty\n", sizeof("Process List is Empty\n"));
+        return;
+    }
+
+    char string[500]; // Storage for sprintf
+    int stringCount; // Count value for sprintf
+
+    for (int i = 0; i < processCounter; i++)
+    {
+        if(strcmp(p[i].status, "Active") == 0)
+        {
+            isListEmpty = 0;
+            stringCount = sprintf(string, "-------------------------------------------------------\n"
+                                            "Name : %s\n"
+                                            "PID : %d\n"
+                                            "Start Time : %s"
+                                            "Status : %s\n"
+                                          "-------------------------------------------------------\n",
+                                          p[i].name,
+                                          p[i].pid,
+                                          p[i].startTime,
+                                          p[i].status);
+
+            write(fd, string, stringCount);
+        }
+    }
+
+    if(isListEmpty == 1)
+    {
+        write(fd, "No active processes\n", sizeof("No active processes\n"));
+    }
+
+
+    return;
+}
 
 // REGISTER SIGNAL HANDLER FOR INVALID PROGRAM
 static void sigusr1_handler (int signo)
@@ -70,11 +221,35 @@ static void sigusr1_handler (int signo)
     return;
 }
 
+// REGISTER SIGNAL HANDLER FOR UPDATING CLIENT LIST
+static void sigusr2_handler (int signo)
+{
+    if(signo == SIGUSR2)
+    {
+        deactivateClientFromList(cli);        
+        // write(STDOUT_FILENO, "DISCONNECT\n", sizeof("DISCONNECT\n"));
+    }
+    return;
+}
+
+
+
+// REGISTER SIGNAL HANDLER FOR PRINTING PROCESS LIST
+static void sigquit_handler (int signo)
+{
+    if(signo == SIGQUIT)
+    {
+        listAll(1);        
+        // write(STDOUT_FILENO, "DISCONNECT\n", sizeof("DISCONNECT\n"));
+    }
+    return;
+}
+
 static void sigchld_handler (int signo)
 {
     if(signo == SIGCHLD)
     {
-        write(STDOUT_FILENO, "SIGCHLD Caught\n", sizeof("SIGCHLD Caught\n"));
+        // write(STDOUT_FILENO, "SIGCHLD Caught\n", sizeof("SIGCHLD Caught\n"));
     }
     return;
 }
@@ -168,6 +343,17 @@ void killWithName(char *name, int fd)
     }
 }
 
+
+
+void killAll()
+{
+    for (int i = 0; i < processCounter; i++)
+    {
+        pid = p[i].pid;
+        kill(pid, SIGTERM);
+    }
+}
+
 //KILL ALL PROCESS WITH SAME NAME
 void killAllWithName(char *name, int fd)
 {
@@ -238,84 +424,12 @@ void run(char program[], int fd)
     }
 }
 
-// RETURNS THE LIST OF ALL ACTIVE AND ALL KILLED PROCESS
-void listAll(int fd)
-{
-    if(processCounter == 0)
-    {
-        write(fd, "Process List is Empty\n", sizeof("Process List is Empty\n"));
-        return;
-    }
-
-    char string[500]; // storage for sprintf
-    int stringCount; // Count value for sprintf
-
-    for (int i = 0; i < processCounter; i++)
-    {
-        stringCount = sprintf(string, "-------------------------------------------------------\n"
-                                        "Name : %s\n"
-                                        "PID : %d\n"
-                                        "Start Time : %s"
-                                        "Stop Time : %s"
-                                        "Status : %s\n"
-                                      "-------------------------------------------------------\n",
-                                p[i].name,
-                                p[i].pid,
-                                p[i].startTime,
-                                p[i].stopTime,
-                                p[i].status);
-
-        string[0] = '\0'; // For avoiding stack smashing
-
-        write(fd, string, stringCount);
-    }
-}
-
-// RETURNS THE LIST OF ALL ACTIVE PROCESS
-void listActive(int fd)
-{
-    int isListEmpty = 1;
-
-    if(processCounter == 0)
-    {
-        write(fd, "Process List is Empty\n", sizeof("Process List is Empty\n"));
-        return;
-    }
-
-    char string[500]; // Storage for sprintf
-    int stringCount; // Count value for sprintf
-
-    for (int i = 0; i < processCounter; i++)
-    {
-        if(strcmp(p[i].status, "Active") == 0)
-        {
-            isListEmpty = 0;
-            stringCount = sprintf(string, "-------------------------------------------------------\n"
-                                            "Name : %s\n"
-                                            "PID : %d\n"
-                                            "Start Time : %s"
-                                            "Status : %s\n"
-                                          "-------------------------------------------------------\n",
-                                          p[i].name,
-                                          p[i].pid,
-                                          p[i].startTime,
-                                          p[i].status);
-
-            write(fd, string, stringCount);
-        }
-    }
-
-    if(isListEmpty == 1)
-    {
-        write(fd, "No active processes\n", sizeof("No active processes\n"));
-    }
-
-
-    return;
-}
 
 void* add(void* argumentList)
 {
+    pthread_mutex_lock (&mutex);
+    
+    sleep(3);
     struct arguments *args = (struct arguments*)argumentList;
     int sock = args ->fd;
     char* token = args ->token;
@@ -338,7 +452,8 @@ void* add(void* argumentList)
         err = write(STDOUT_FILENO, res, buff_size);
         err = write(sock, res, buff_size);
     }
-    result = 0;    
+
+    pthread_mutex_unlock(&mutex);
     pthread_exit(0);
 }
 
@@ -451,13 +566,6 @@ void parseList(int fd, char *token)
     return;
 }
 
-void quit(int fd)
-{
-    write(fd, "Not allowed!\n", sizeof("Not allowed!\n"));
-    sleep(1);
-    return;
-}
-
 // INITIALIZES AND RETURNS A SOCKET FD
 int initServer()
 {
@@ -503,18 +611,98 @@ int initServer()
     return sock;
 }
 
-void parser(int fd)
+
+void serverParser(char terminalInput[], int terminalInputCount)
+{
+	const char s[2] = " "; // strdelimiter
+	char *token;
+	char *tokenTwo;
+    char *tokenThree;
+    char *tokenFour;
+    
+    if((terminalInputCount == 1))
+    {
+        write(STDOUT_FILENO, "No command entered\n", sizeof("No command entered\n"));
+        return;
+    }
+
+	terminalInput[terminalInputCount - 1] = '\0';
+	
+	token = strtok(terminalInput, s);
+
+
+    if(strcmp(token, "exit") == 0)
+    {
+        exit(0);
+    }
+
+    if(strcmp(token, "list") == 0)
+    {
+        tokenTwo = strtok(NULL, s);
+        if(tokenTwo == NULL)
+        {
+            listClients();
+            return;
+        }
+        if(strcmp(tokenTwo, "all") == 0)
+        {
+            killpg(0, SIGQUIT);
+        }
+        return;
+    }
+
+    if(strcmp(token, "message") == 0)
+    {
+        char *ptr = "\0";
+        if(token != NULL)
+        {
+            tokenTwo = strtok(NULL, s);
+            if(tokenTwo != NULL)
+            {
+                int targetFD = strtod(tokenTwo, &ptr);
+                tokenThree = strtok(NULL, "");
+                write(targetFD, tokenThree, strlen(tokenThree));
+            }
+        }
+        return;
+    }
+
+
+    // If help
+    if(strcmp(line, "help") == 0)
+    {
+        char helpOutput[] = "----------------------------------------------------------------------------------------\n"
+                            "lisr                                       -- to display list of connected clients\n"
+                            "list all                                   -- to display list of all currently running processes\n"
+                            "message <fd of client> <your message>      -- to send a message to a desired client\n"
+                            "exit                                       -- to quit now!\n"
+                            "disconnect                                 -- to disconnect client\n"
+                            "----------------------------------------------------------------------------------------\n";
+
+        write(STDOUT_FILENO, helpOutput, sizeof(helpOutput));
+        return 0;
+    }
+
+
+
+
+    write(STDOUT_FILENO, "Invalid Command\n", sizeof("Invalid Command\n"));
+	return;
+}
+
+
+int parser(int fd, char line[], int lineCount)
 {
     pthread_t addThread;
     pthread_t subThread;
     pthread_t multThread;
 
-    lineCount = read(fd, line, LINE_READ_SIZE); // read from client fd
+    char* token; // strtoken
     
     if(lineCount == 1) // a workaround to prevent segmentation fault
     {
         write(fd, "No command entered\n", sizeof("No command entered\n"));
-        return;
+        return 0;
     }
     
     line[lineCount - 1] = '\0'; // add a null character at the end
@@ -532,15 +720,9 @@ void parser(int fd)
         {
             write(fd, "run <process name>\n", sizeof("run <process name>\n"));
         }
-        return;
+        return 0;
     }
 
-    // If exit
-    if(strcmp(token, "exit") == 0)
-    {
-        quit(fd);
-        return;
-    }
 
     // If add
     if(strcmp(token, "add") == 0)
@@ -550,7 +732,7 @@ void parser(int fd)
         args.token = token;
         pthread_create(&addThread, NULL, add, (void *)&args);
         pthread_join(addThread, NULL);
-        return;
+        return 0;
     }
 
     // If sub
@@ -561,7 +743,7 @@ void parser(int fd)
         args.token = token;
         pthread_create(&subThread, NULL, subtract, (void *)&args);
         pthread_join(subThread, NULL);
-        return;
+        return 0;
     }
 
     // If mult
@@ -572,22 +754,32 @@ void parser(int fd)
         args.token = token;
         pthread_create(&multThread, NULL, multiply, (void *)&args);
         pthread_join(multThread, NULL);
-        return;
+        return 0;
     }
 
     // If list all/list
     if(strcmp(token, "list") == 0)
     {
         parseList(fd, token);
-        return;
+        return 0;
     }
 
     // If kill
     if(strcmp(token, "kill") == 0)
     {
         parseKill(fd, token);
-        return;
+        return 0;
     }
+
+    // If disconnect
+    if(strcmp(token, "disconnect") == 0)
+    {
+        killAll();
+        kill(getppid(), SIGUSR2);
+        write(fd, "Disconnected From Server\n", sizeof("Disconnected From Server\n"));
+        return fd;
+    }
+
 
     // If help
     if(strcmp(line, "help") == 0)
@@ -601,30 +793,35 @@ void parser(int fd)
                             "sub <integer1> <integer2> ... <integerN>   -- to subtract multiple numbers\n"
                             "mult <integer1> <integer2> ... <integerN>  -- to multiply multiple numbers\n"
                             "exit                                       -- to quit now!\n"
+                            "disconnect                                 -- to disconnect client\n"
                             "----------------------------------------------------------------------------------------\n";
 
         write(fd, helpOutput, sizeof(helpOutput));
-        return;
+        return 0;
     }
 
     write(fd, "Invalid Command\n", sizeof("Invalid Command\n")); // if all else fails
+    return 0;
 
 }
 
-// THREAD
-void *mainServerTerminalReader()
+// THREAD FOR READING FROM SERVER INPUT
+void* mainServerTerminalReader()
 {
     write(STDOUT_FILENO, "``Server Started``\n", sizeof("``Server Started``\n"));
     while(1)
     {
-        char *terminalLineBuffer[LINE_READ_SIZE]; // for reading from terminal
+        char terminalLineBuffer[LINE_READ_SIZE]; // for reading from terminal
         int terminalLineCount = read(STDIN_FILENO, &terminalLineBuffer, LINE_READ_SIZE);  
+
         if(terminalLineCount < 0)
         {
             perror("Server Terminal Read Error");
             exit(0);
         }
-        write(STDOUT_FILENO, terminalLineBuffer, terminalLineCount);
+
+        serverParser(terminalLineBuffer, terminalLineCount);
+        // write(STDOUT_FILENO, terminalLineBuffer, terminalLineCount);
     }
     pthread_exit(0);
 }
@@ -633,7 +830,6 @@ void *mainServerTerminalReader()
 int main(int argc, char const *argv[])
 {
     int sock = initServer();
-    int cli;
     int status;
     pid_t pid;
     int len = sizeof(struct sockaddr_in);
@@ -642,8 +838,15 @@ int main(int argc, char const *argv[])
     struct sockaddr_in client;    
     pthread_t serverThread; // thread ID
 
-    int threadReturnValue = pthread_create(&serverThread, NULL, mainServerTerminalReader, NULL); // create a thread task
+    signal(SIGUSR2, sigusr2_handler);
+    signal(SIGQUIT, sigquit_handler);
+    
 
+    int threadReturnValue = pthread_create(&serverThread, NULL, mainServerTerminalReader, NULL); // create a thread task
+    if(threadReturnValue < 0)
+    {
+        perror("Main Server Thread Error");
+    }
     while(1)
     {
         if((cli = accept(sock, (struct sockaddr *)&client, &len)) < 0)
@@ -651,6 +854,8 @@ int main(int argc, char const *argv[])
             perror("Accept Error");
             exit(1);
         }
+
+        appendClient(cli, client);
 
         // while(1)
         // {
@@ -667,21 +872,23 @@ int main(int argc, char const *argv[])
             case 0:
             while(1)
             {
-                parser(cli);          
+                char line[LINE_READ_SIZE]; // reading from terminal
+                int lineCount = 0; // line count 
+                lineCount = read(cli, line, LINE_READ_SIZE); // read from client fd
+                int clientWantsToDisconnecFD = parser(cli, line, lineCount);
             }
+            exit(cli);
             
             // default:
             // waitpid(pid, &status, WNOHANG);
             // if(WIFEXITED(status))
             // {
-            //     exit(0);
+            //     int result = WEXITSTATUS(status);
+            //     char stringStatus[20];
+            //     int stringStatusCount = sprintf(stringStatus, "%d", result);
+            //     write(1, stringStatus, stringStatusCount);
             // }
         }
-    }
-
-    if(threadReturnValue < 0)
-    {
-        perror("Thread Error");
     }
 
     pthread_join(serverThread, NULL); // waits until a thread is complete so that the program doesn't exit before thread execution
