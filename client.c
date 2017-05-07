@@ -86,13 +86,21 @@ pthread_t serverInputThread;
 	terminalInput[terminalInputCount - 1] = '\0';
 	
 	token = strtok(terminalInput, s);
+
+
+	if(token == NULL)
+	{
+		write(STDOUT_FILENO, "No command entered\n", sizeof("No command entered\n"));
+		return;
+	}
+
 	
 	// If exit
     if(strcmp(token, "exit") == 0)
     {
 		exit(0);   
+		return;
     }
-	return;
 
 	if(isClientActive == 0)
 	{

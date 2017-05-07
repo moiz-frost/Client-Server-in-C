@@ -32,7 +32,10 @@ const char s[2] = " "; // strdelimiter
 int pid = 0; // kill PID from user input
 char name[MAX_PROCESS]; // kill name from user input
 int cli; // clientFD
-int clientWantsToDisconnect = 0;
+
+int clientHasGeneratedSigchild = 0;
+int processHasGeneratedSigchild = 0;
+
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -137,7 +140,7 @@ void listAll(int fd)
 {
     if(processCounter == 0)
     {
-        write(fd, "Process List is Empty\n", sizeof("Process List is Empty\n"));
+        // write(fd, "Process List is Empty\n", sizeof("Process List is Empty\n"));
         return;
     }
 
@@ -226,7 +229,6 @@ static void sigusr2_handler (int signo)
 {
     if(signo == SIGUSR2)
     {
-        deactivateClientFromList(cli);        
         // write(STDOUT_FILENO, "DISCONNECT\n", sizeof("DISCONNECT\n"));
     }
     return;
@@ -249,10 +251,36 @@ static void sigchld_handler (int signo)
 {
     if(signo == SIGCHLD)
     {
-        // write(STDOUT_FILENO, "SIGCHLD Caught\n", sizeof("SIGCHLD Caught\n"));
+        int status;
+        pid_t pid = wait(&status);
+        for (int i = 0; i < processCounter; i++)
+        {
+            if(p[i].pid == pid)
+            {
+                if((strcmp(p[i].status, "Active") == 0))
+                {
+                    kill(pid, SIGTERM);
+                    sprintf(p[i].stopTime, "%s", currentSystemDateTime);
+                    sprintf(p[i].status, "%s", "Inactive");
+                    break;
+                }
+            }
+        }
     }
-    return;
 }
+
+
+static void sigprof_handler (int signo)
+{
+    if(signo == SIGPROF)
+    {
+        deactivateClientFromList(cli);
+    }
+}
+
+
+
+
 
 // GETS CURRENT SYSTEM DATE AND TIME AND STORES IN currentSystemDateTime VARIABLE
 char setCurrentSystemDateTime()
@@ -281,7 +309,8 @@ void killWithPID(int pid, int fd)
     {
         if(p[i].pid == pid)
         {
-            if((strcmp(p[i].status, "Active") == 0))
+            doesNotExist = 0;
+            if((strcmp(p[i].status, "Active")) == 0)
             {
                 kill(pid, SIGTERM);
                 sprintf(p[i].stopTime, "%s", currentSystemDateTime);
@@ -314,12 +343,14 @@ void killWithName(char *name, int fd)
 
     count = sprintf(processName, "%s\n", name);
 
+    processName[strlen(processName) - 1] = '\0'; // add a null character at the end
+
     for (int i = 0; i < processCounter; i++)
     {
-        if(strcmp(p[i].name, processName))
+        if((strcmp(p[i].name, processName)) == 0)
         {
             doesNotExist = 0;
-            if((strcmp(p[i].status, "Active") == 0))
+            if((strcmp(p[i].status, "Active")) == 0)
             {
                 pid = p[i].pid;
                 kill(pid, SIGTERM);
@@ -362,12 +393,15 @@ void killAllWithName(char *name, int fd)
     int count;
     int doesNotExist = 1;
     count = sprintf(processName, "%s\n", name);
+
+    processName[strlen(processName) - 1] = '\0'; // add a null character at the end
+
     for (int i = 0; i < processCounter; i++)
     {
         doesNotExist = 0;
-        if(strcmp(p[i].name, processName)) 
+        if((strcmp(p[i].name, processName)) == 0) 
         {
-            if((strcmp(p[i].status, "Active") == 0))
+            if((strcmp(p[i].status, "Active")) == 0)
             {
                 pid = p[i].pid;
                 kill(pid, SIGTERM);
@@ -379,10 +413,11 @@ void killAllWithName(char *name, int fd)
     if(doesNotExist == 1)
     {
         write(fd, "No process with specified name exists\n", sizeof("No process with specified name exists\n"));
-    } else 
-    {
-        count = sprintf(message, "~~~Killed all instances of Process~~~\n   Name : %s\n", processName);        
-    }
+    } 
+    // else 
+    // {
+    //     count = sprintf(message, "~~~Killed all instances of Process~~~\n   Name : %s\n", processName);        
+    // }
     write(fd, message, count);
 }
 
@@ -390,7 +425,7 @@ void killAllWithName(char *name, int fd)
 void run(char program[], int fd)
 {
     int execStatus = 0; // exec status of execlp in child
-    int status = 0; // exit status
+    int status;
     char stringStatus[10];
     int count = 0; // buffer count
     pid_t pid = 0; // pid
@@ -405,6 +440,7 @@ void run(char program[], int fd)
         // If invalid program, then resort to the code below, which will basically generate a signal
         write(fd, "Invalid Program!\n", sizeof("Invalid Program!\n"));
         kill(getppid(), SIGUSR1);
+        signal(SIGCHLD, sigchld_handler);
         exit(2);
 
         default:
@@ -418,7 +454,6 @@ void run(char program[], int fd)
 
         waitpid(pid, &status, WNOHANG);
 
-        signal(SIGCHLD, sigchld_handler);
 
             
     }
@@ -600,7 +635,7 @@ int initServer()
     write(STDOUT_FILENO, port, portCount);
 
 
-    if((listen(sock, 5)) == -1)
+    if((listen(sock, 50)) == -1)
     {
         perror("Server Listen Error");
         exit(-1);
@@ -675,7 +710,6 @@ void serverParser(char terminalInput[], int terminalInputCount)
                             "list all                                   -- to display list of all currently running processes\n"
                             "message <fd of client> <your message>      -- to send a message to a desired client\n"
                             "exit                                       -- to quit now!\n"
-                            "disconnect                                 -- to disconnect client\n"
                             "----------------------------------------------------------------------------------------\n";
 
         write(STDOUT_FILENO, helpOutput, sizeof(helpOutput));
@@ -774,7 +808,7 @@ int parser(int fd, char line[], int lineCount)
     if(strcmp(token, "disconnect") == 0)
     {
         killAll();
-        kill(getppid(), SIGUSR2);
+        kill(getppid(), SIGPROF);
         write(fd, "Disconnected From Server\n", sizeof("Disconnected From Server\n"));
         return fd;
     }
@@ -792,6 +826,7 @@ int parser(int fd, char line[], int lineCount)
                             "sub <integer1> <integer2> ... <integerN>   -- to subtract multiple numbers\n"
                             "mult <integer1> <integer2> ... <integerN>  -- to multiply multiple numbers\n"
                             "exit                                       -- to quit now!\n"
+                            "connect <ip> <port>                        -- to connect client\n"
                             "disconnect                                 -- to disconnect client\n"
                             "----------------------------------------------------------------------------------------\n";
 
@@ -829,7 +864,6 @@ void* mainServerTerminalReader()
 int main(int argc, char const *argv[])
 {
     int sock = initServer();
-    int status;
     pid_t pid;
     int len = sizeof(struct sockaddr_in);
     char clientFD[50];
@@ -839,7 +873,8 @@ int main(int argc, char const *argv[])
 
     signal(SIGUSR2, sigusr2_handler);
     signal(SIGQUIT, sigquit_handler);
-    
+    signal(SIGCHLD, sigchld_handler);
+    signal(SIGPROF, sigprof_handler);
 
     int threadReturnValue = pthread_create(&serverThread, NULL, mainServerTerminalReader, NULL); // create a thread task
     if(threadReturnValue < 0)
